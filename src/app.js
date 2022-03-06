@@ -59,8 +59,8 @@ app.get("/games", async (req, res) => {
                 SELECT games.*, categories.name AS "categoryName" 
                 FROM games 
                 JOIN categories ON games."categoryId"=categories.id
-                WHERE games.name LIKE '%'||$1||'%';
-            `, [myQuery]);
+                WHERE games.name LIKE $1;
+            `, [`%${myQuery}%`]);
         }
         res.send(allGames.rows);
     } catch (error) {
@@ -115,8 +115,8 @@ app.get("/customers", async (req, res) => {
             `);
         } else{
             customersList = await connection.query(`
-                SELECT * FROM customers WHERE cpf LIKE '%'||$1||'%';
-            `, [cpf]);
+                SELECT * FROM customers WHERE cpf LIKE $1;
+            `, [`${cpf}%`]);
         }
         res.send(customersList.rows);
     } catch (error) {
@@ -190,11 +190,50 @@ app.put("/customers/:id", async (req, res) => {
 
 app.get("/rentals", async (req, res) => {
     try {
-        const allRentals = await connection.query(`
-            SELECT * FROM rentals;
-        `);
-        res.send(allRentals.rows);
+        const allRentals = await connection.query({
+            text: `
+                SELECT rentals.*, 
+                    customers.name AS customerName,
+                    games.name AS "gameName",
+                    games."categoryId", categories.name AS "categoryName"
+
+                FROM rentals
+                    JOIN customers ON rentals."customerId" = customers.id
+                    JOIN games ON rentals."gameId" = games.id
+                    JOIN categories ON games."categoryId" = categories.id;
+            `,
+            rowMode: 'array'
+        });
+        res.send(allRentals.rows.map(row =>{
+            const [
+            id,
+            customerId, 
+            gameId, 
+            rentDate,
+            daysRented, 
+            returnDate, 
+            originalPrice, 
+            delayFee,
+            customerName,
+            gameName,
+            categoryId,
+            categoryName
+        ] = row;
+            return {
+                id,
+                customerId, 
+                gameId, 
+                rentDate,
+                daysRented, 
+                returnDate, 
+                originalPrice, 
+                delayFee,
+                customer : { id: customerId, name: customerName},
+                game : {id: gameId, name: gameName, categoryId: categoryId, categoryName: categoryName}
+            }
+        }));
     } catch (error) {
+        console.log(error);
         res.sendStatus(500);
     }
 });
@@ -231,12 +270,13 @@ app.post("/rentals", async (req, res) => {
 
         const price = daysRented * (existentGame.rows[0].pricePerDay);
         
-        await connection.query(`
-            INSERT INTO rentals
-                ("customerId", 
-                "gameId", 
-                "rentDate",
-                "daysRented", 
+        await connection.query(`"customerId", 
+        "gameId", 
+        "rentDate",
+        "daysRented", 
+        "returnDate", 
+        "originalPrice", 
+        "delayFee"
                 "returnDate", 
                 "originalPrice", 
                 "delayFee")
