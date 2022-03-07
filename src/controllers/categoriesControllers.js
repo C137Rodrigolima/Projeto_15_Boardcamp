@@ -14,9 +14,6 @@ export async function getCategories (req, res) {
 
 export async function postCategory (req, res) {
     const {name} = req.body;
-    if(name === ""){
-        return res.sendStatus(400);
-    }
     try {
         const existentCategorie = await connection.query(`
             SELECT * FROM categories WHERE name=$1

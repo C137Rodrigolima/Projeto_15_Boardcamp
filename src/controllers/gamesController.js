@@ -29,10 +29,6 @@ export async function getGames(req, res) {
 export async function postGames(req,res) {
     const {name, image, stockTotal, categoryId, pricePerDay} = req.body;
 
-    if(name === "" || stockTotal <=0 || pricePerDay <=0){
-        return res.sendStatus(400);
-    }
-
     try {
         const existentIDCategory = await connection.query(`
             SELECT * FROM categories
