@@ -189,6 +189,15 @@ app.put("/customers/:id", async (req, res) => {
 });
 
 app.get("/rentals", async (req, res) => {
+    let game = '';
+    let customer = '';
+
+    if(req.query.gameId){
+        game = `WHERE "gameId" = ${req.query.gameId}`;
+    } else if (req.query.customerId){
+        customer = `WHERE "customerId" = ${req.query.customerId}`;
+    }
+
     try {
         const allRentals = await connection.query({
             text: `
@@ -200,36 +209,37 @@ app.get("/rentals", async (req, res) => {
                 FROM rentals
                     JOIN customers ON rentals."customerId" = customers.id
                     JOIN games ON rentals."gameId" = games.id
-                    JOIN categories ON games."categoryId" = categories.id;
-            `,
+                    JOIN categories ON games."categoryId" = categories.id
+                ${game}
+                ${customer}
+            ;`,
             rowMode: 'array'
         });
         res.send(allRentals.rows.map(row =>{
             const [
-            id,
-            customerId, 
-            gameId, 
-            rentDate,
-            daysRented, 
-            returnDate, 
-            originalPrice, 
-            delayFee,
-            customerName,
-            gameName,
-            categoryId,
-            categoryName
-        ] = row;
+                id, customerId, gameId, rentDate, daysRented, returnDate, originalPrice, 
+                delayFee, customerName, gameName, categoryId, categoryName
+            ] = row;
+
+            const initialDate = convert(Date(rentDate));
+            let returned = null;
+            let delay = null;
+            if(returnDate !== null){
+                returned = convert(Date(returnDate));
+            } else if( delayFee !== null){
+                delay = convert(Date(delayFee));
+            }
+
             return {
-                id,
-                customerId, 
-                gameId, 
-                rentDate,
-                daysRented, 
-                returnDate, 
-                originalPrice, 
-                delayFee,
-                customer : { id: customerId, name: customerName},
-                game : {id: gameId, name: gameName, categoryId: categoryId, categoryName: categoryName}
+                id, customerId, gameId, rentDate: initialDate, daysRented, 
+                returnDate: returned, originalPrice, delayFee: delay,
+                customer: { 
+                    id: customerId, name: customerName
+                },
+                game: {
+                    id: gameId, name: gameName, 
+                    categoryId: categoryId, categoryName: categoryName
+                }
             }
         }));
     } catch (error) {
@@ -238,9 +248,15 @@ app.get("/rentals", async (req, res) => {
     }
 });
 
+function convert(str) {
+    var date = new Date(str),
+        mnth = ("0" + (date.getMonth() + 1)).slice(-2),
+        day = ("0" + date.getDate()).slice(-2);
+    return [date.getFullYear(), mnth, day].join("-");
+}
+
 app.post("/rentals", async (req, res) => {
     const {customerId, gameId, daysRented} = req.body;
-    const date = dayjs().format("YYYY-MM-DD");
 
     try {
         const existentCustomer = await connection.query(`
@@ -260,7 +276,7 @@ app.post("/rentals", async (req, res) => {
 
         const existentRentals = await connection.query(`
             SELECT * FROM rentals
-            WHERE "gameId" = $1;
+            WHERE "gameId"=$1 AND "returnDate" IS NULL;
         `, [gameId]);
         // needed to select  AND "returnDate" = NULL to count the correct number of rentals;
 
@@ -270,23 +286,62 @@ app.post("/rentals", async (req, res) => {
 
         const price = daysRented * (existentGame.rows[0].pricePerDay);
         
-        await connection.query(`"customerId", 
-        "gameId", 
-        "rentDate",
-        "daysRented", 
-        "returnDate", 
-        "originalPrice", 
-        "delayFee"
-                "returnDate", 
-                "originalPrice", 
-                "delayFee")
+        await connection.query(`
+            INSERT INTO rentals
+            ("customerId", 
+            "gameId", 
+            "rentDate",
+            "daysRented", 
+            "returnDate", 
+            "originalPrice", 
+            "delayFee")
             VALUES
                 ($1, $2, $3, $4, NULL, $5, NULL);
-        `, [customerId, gameId, date, daysRented, price]);
+        `, [customerId, gameId, dayjs().format("YYYY-MM-DD"), daysRented, price]);
 
+        console.log(dayjs().format("YYYY-MM-DD"))
         res.sendStatus(201);
     } catch (error) {
         console.log(error);
+        res.sendStatus(500);
+    }
+});
+
+app.post("/rentals/:id/return", async (req, res) => {
+    const {id} = req.params;
+    let priceDelay = 0;
+    try {
+        const existentRent = await connection.query(`
+            SELECT * FROM rentals WHERE id = $1;
+        `, [id]);
+        const existentGame = await connection.query(`
+            SELECT * FROM games WHERE id = $1;
+        `, [existentRent.rows[0].gameId]);
+        if(existentRent.rows.length === 0){
+            res.sendStatus(404);
+        } else if(existentRent.rows[0].returnDate !== null){
+            res.sendStatus(400);
+        }
+
+        priceDelay = (
+            parseInt(existentRent.rendDate.split("-")[2])
+            + 
+            existentRent.daysRented
+            - 
+            parseInt(dayjs().format("DD"))
+            *
+            existentGame.rows[0].pricePerDay
+        );
+
+
+        await connection.query(`
+            UPDATE rentals SET "returnDate" = $1, "delayFee" = $2
+            WHERE id = $3;
+        `, [dayjs().format("YYYY-MM-DD"), priceDelay, id]);
+
+        res.sendStatus(500);
+    } catch (error) {
+        console.log(500);
         res.sendStatus(500);
     }
 });
@@ -299,7 +354,7 @@ app.delete("/rentals/:id", async (req, res) => {
         `, [id]);
         if(existentRentals.rows.length === 0){
             return res.sendStatus(404);
-        } else if (existentRentals.rows.returnDate !== null){
+        } else if (existentRentals.rows[0].returnDate !== null){
             return res.sendStatus(400);
         }
 
